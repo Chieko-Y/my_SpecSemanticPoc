@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>仕様書 類似検索</title>
+<style>
+  :root {
+    --header-bg: #14213d;
+    --accent: #2f6f4f;
+    --grade-a: #1d7a3d;
+    --grade-b: #1d6fa5;
+    --grade-c: #b06a00;
+    --grade-d: #999999;
+    --bg: #f4f5f7;
+    --card-bg: #ffffff;
+    --border: #e2e4e8;
+    --text: #1f2430;
+    --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: var(--header-bg);
+    color: #fff;
+    padding: 20px 24px;
+  }
+  header h1 { margin: 0 0 4px; font-size: 1.4rem; }
+  header p { margin: 0; font-size: 0.85rem; color: #c7cede; }
+
+  main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px 16px 60px;
+  }
+
+  .search-panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .search-row {
+    display: flex;
+    gap: 10px;
+  }
+  .search-row input[type="text"] {
+    flex: 1;
+    padding: 10px 12px;
+    font-size: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .search-row button {
+    padding: 10px 22px;
+    font-size: 1rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .search-row button:disabled { opacity: 0.6; cursor: default; }
+
+  .makers {
+    margin-top: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .maker-chip {
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: #fff;
+    font-size: 0.85rem;
+    cursor: pointer;
+    color: var(--text);
+  }
+  .maker-chip.active {
+    background: var(--header-bg);
+    color: #fff;
+    border-color: var(--header-bg);
+  }
+
+  .stats-line {
+    margin-top: 12px;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+
+  .result-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 14px;
+  }
+  .result-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .result-title { font-weight: 600; }
+  .result-title.hit { color: var(--accent); }
+  .result-title.miss { color: var(--muted); }
+
+  .grade-badge {
+    font-weight: 700;
+    font-size: 0.85rem;
+    padding: 3px 10px;
+    border-radius: 6px;
+    color: #fff;
+  }
+  .grade-A { background: var(--grade-a); }
+  .grade-B { background: var(--grade-b); }
+  .grade-C { background: var(--grade-c); }
+  .grade-D { background: var(--grade-d); }
+
+  .meta-table {
+    margin-top: 10px;
+    font-size: 0.85rem;
+    color: var(--text);
+  }
+  .meta-table div { margin: 2px 0; }
+  .meta-label { color: var(--muted); display: inline-block; min-width: 6.5em; }
+
+  .excerpt {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: #f8f8fa;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+
+  .empty, .loading {
+    color: var(--muted);
+    font-size: 0.9rem;
+    padding: 20px 4px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>仕様書 類似検索</h1>
+  <p>ローカルの仕様書Markdownから、質問文に近い章を意味検索します。</p>
+</header>
+
+<main>
+  <div class="search-panel">
+    <div class="search-row">
+      <input id="query" type="text" placeholder="例: ワイパーの感度を調整する方法は?" autofocus />
+      <button id="search-btn">検索</button>
+    </div>
+    <div class="makers" id="makers"></div>
+    <div class="stats-line" id="stats-line">読み込み中...</div>
+  </div>
+
+  <div id="results"></div>
+</main>
+
+<script>
+  let selectedMaker = null;
+  let statsCache = null;
+
+  const $ = (id) => document.getElementById(id);
+
+  async function loadStats() {
+    const res = await fetch("/api/stats");
+    statsCache = await res.json();
+    renderMakers();
+    renderStatsLine();
+  }
+
+  function renderMakers() {
+    const el = $("makers");
+    el.innerHTML = "";
+    const allChip = makeChip("全メーカー", null, statsCache.total_docs);
+    el.appendChild(allChip);
+    for (const m of statsCache.makers) {
+      el.appendChild(makeChip(m.maker, m.maker, m.doc_count));
+    }
+  }
+
+  function makeChip(label, makerValue, count) {
+    const btn = document.createElement("button");
+    btn.className = "maker-chip" + (selectedMaker === makerValue ? " active" : "");
+    btn.textContent = `${label} ${count}`;
+    btn.onclick = () => {
+      selectedMaker = makerValue;
+      renderMakers();
+      runSearch();
+    };
+    return btn;
+  }
+
+  function renderStatsLine() {
+    $("stats-line").textContent =
+      `検索対象: ${statsCache.total_docs}文書 / ${statsCache.total_chunks}チャンク / 検索方式: sentence-transformers`;
+  }
+
+  function gradeLabel(grade) {
+    return { A: "検索類似度 A", B: "検索類似度 B", C: "検索類似度 C", D: "検索類似度 D" }[grade] || grade;
+  }
+
+  async function runSearch() {
+    const query = $("query").value.trim();
+    const resultsEl = $("results");
+    if (!query) {
+      resultsEl.innerHTML = "";
+      return;
+    }
+    resultsEl.innerHTML = '<div class="loading">検索中...</div>';
+    $("search-btn").disabled = true;
+    try {
+      const res = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, limit: 10, maker: selectedMaker }),
+      });
+      const data = await res.json();
+      renderResults(data.results);
+    } catch (e) {
+      resultsEl.innerHTML = `<div class="empty">検索中にエラーが発生しました: ${e}</div>`;
+    } finally {
+      $("search-btn").disabled = false;
+    }
+  }
+
+  function renderResults(results) {
+    const resultsEl = $("results");
+    if (!results || results.length === 0) {
+      resultsEl.innerHTML = '<div class="empty">該当する結果がありません。</div>';
+      return;
+    }
+    resultsEl.innerHTML = "";
+    results.forEach((r, i) => {
+      const pct = Math.round(r.score * 100);
+      const card = document.createElement("div");
+      card.className = "result-card";
+      card.innerHTML = `
+        <div class="result-head">
+          <span class="result-title ${r.hit ? "hit" : "miss"}">
+            Result ${i + 1}: ${r.hit ? "該当あり" : "該当なし"}
+          </span>
+          <span class="grade-badge grade-${r.grade}">${gradeLabel(r.grade)} (${pct}%)</span>
+        </div>
+        <div class="meta-table">
+          <div><span class="meta-label">メーカー</span>${escapeHtml(r.maker)}</div>
+          <div><span class="meta-label">車種</span>${escapeHtml(r.model)}</div>
+          ${r.category ? `<div><span class="meta-label">カテゴリ</span>${escapeHtml(r.category)}</div>` : ""}
+          <div><span class="meta-label">仕様書名</span>${escapeHtml(r.doc_name)}</div>
+          ${r.page_range ? `<div><span class="meta-label">ページ</span>p.${escapeHtml(r.page_range)}</div>` : ""}
+          <div><span class="meta-label">章パス</span>${escapeHtml(r.heading_path)}</div>
+        </div>
+        <div class="excerpt">${escapeHtml(r.excerpt)}</div>
+      `;
+      resultsEl.appendChild(card);
+    });
+  }
+
+  function escapeHtml(s) {
+    return (s ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  $("search-btn").addEventListener("click", runSearch);
+  $("query").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") runSearch();
+  });
+
+  loadStats();
+</script>
+</body>
+</html>

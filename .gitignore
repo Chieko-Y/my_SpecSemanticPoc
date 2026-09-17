@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 仕様書データ本体(md/png など)は管理対象外。app/ingest.py が data/ を読み込む前提のみ共有する
+data/*
+!data/.gitkeep
