@@ -143,6 +143,54 @@
     line-height: 1.5;
   }
 
+  .context-grid {
+    margin-top: 10px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+  @media (max-width: 640px) {
+    .context-grid { grid-template-columns: 1fr; }
+  }
+  .context-col {
+    display: flex;
+    flex-direction: column;
+  }
+  .context-label {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .context-box {
+    flex: 1;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+  .context-box.side {
+    background: #f0f1f4;
+    color: var(--muted);
+  }
+  .context-box.hit {
+    background: #eef6f0;
+    border: 1px solid var(--accent);
+    color: var(--text);
+  }
+  .context-box.empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-style: italic;
+  }
+
+  .expansion-note {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
   .empty, .loading {
     color: var(--muted);
     font-size: 0.9rem;
@@ -185,6 +233,11 @@
   function renderMakers() {
     const el = $("makers");
     el.innerHTML = "";
+    if (!statsCache.has_maker_axis) {
+      // data/facets.json で maker が絞り込み軸として宣言されていないデータには
+      // 誤ったメーカー名を出さないよう、絞り込みチップ自体を表示しない
+      return;
+    }
     const allChip = makeChip("全メーカー", null, statsCache.total_docs);
     el.appendChild(allChip);
     for (const m of statsCache.makers) {
@@ -206,7 +259,8 @@
 
   function renderStatsLine() {
     $("stats-line").textContent =
-      `検索対象: ${statsCache.total_docs}文書 / ${statsCache.total_chunks}チャンク / 検索方式: sentence-transformers`;
+      `検索対象: ${statsCache.total_docs}文書 / ${statsCache.total_chunks}チャンク / ` +
+      `検索方式: sentence-transformers / スコア規則: ${statsCache.policy_version}`;
   }
 
   function gradeLabel(grade) {
@@ -229,7 +283,7 @@
         body: JSON.stringify({ query, limit: 10, maker: selectedMaker }),
       });
       const data = await res.json();
-      renderResults(data.results);
+      renderResults(data.results, data.expanded_terms);
     } catch (e) {
       resultsEl.innerHTML = `<div class="empty">検索中にエラーが発生しました: ${e}</div>`;
     } finally {
@@ -237,13 +291,19 @@
     }
   }
 
-  function renderResults(results) {
+  function renderResults(results, expandedTerms) {
     const resultsEl = $("results");
     if (!results || results.length === 0) {
       resultsEl.innerHTML = '<div class="empty">該当する結果がありません。</div>';
       return;
     }
     resultsEl.innerHTML = "";
+    if (expandedTerms && expandedTerms.length > 0) {
+      const note = document.createElement("div");
+      note.className = "expansion-note";
+      note.textContent = `辞書により検索語を拡張しました: ${expandedTerms.join(", ")}`;
+      resultsEl.appendChild(note);
+    }
     results.forEach((r, i) => {
       const pct = Math.round(r.score * 100);
       const card = document.createElement("div");
@@ -263,7 +323,24 @@
           ${r.page_range ? `<div><span class="meta-label">ページ</span>p.${escapeHtml(r.page_range)}</div>` : ""}
           <div><span class="meta-label">章パス</span>${escapeHtml(r.heading_path)}</div>
         </div>
-        <div class="excerpt">${escapeHtml(r.excerpt)}</div>
+        <div class="context-grid">
+          <div class="context-col">
+            <div class="context-label">前の文脈</div>
+            ${r.context_before
+              ? `<div class="context-box side">${escapeHtml(r.context_before)}</div>`
+              : `<div class="context-box side empty">(文脈なし)</div>`}
+          </div>
+          <div class="context-col">
+            <div class="context-label">該当箇所</div>
+            <div class="context-box hit">${escapeHtml(r.excerpt)}</div>
+          </div>
+          <div class="context-col">
+            <div class="context-label">後の文脈</div>
+            ${r.context_after
+              ? `<div class="context-box side">${escapeHtml(r.context_after)}</div>`
+              : `<div class="context-box side empty">(文脈なし)</div>`}
+          </div>
+        </div>
       `;
       resultsEl.appendChild(card);
     });

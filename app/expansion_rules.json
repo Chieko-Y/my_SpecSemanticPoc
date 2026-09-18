@@ -1,0 +1,26 @@
+{
+  "groups": [
+    ["ACC OFF", "ACC off", "ACCオフ", "アクセサリーオフ"],
+    ["ACC ON", "ACC on", "ACCオン", "アクセサリーオン"],
+    ["ワイパー", "ワイパーブレード", "ワイパースイッチ", "ワイパーレバー"],
+    ["タッチスクリーン", "タッチパネル", "画面操作", "タッチ操作"],
+
+    ["CarPlay", "Apple CarPlay", "カープレイ", "CP"],
+    ["Android Auto", "アンドロイドオート", "AA"],
+    ["BT", "Bluetooth"],
+    ["CID", "Center Information Display"],
+    ["DTMF", "Dual Tone Multi Frequency"],
+    ["FOTA", "Firmware Over-The-Air Update"],
+    ["HF", "Hands-Free"],
+    ["IG", "IGN", "Ignition"],
+    ["RBDS", "Radio Broadcast Data System"],
+    ["STRG", "Steering"],
+    ["STSW", "Steering Switch"],
+    ["SW", "SW_BTN", "Switch", "Physical Switch"],
+    ["SXM", "Sirius XM Radio"],
+    ["VR", "Voice Recognition", "音声認識", "音認"],
+    ["YT Music", "YouTube Music"],
+    ["MPH", "mile-per-hour"],
+    ["Nav", "Navigation"]
+  ]
+}

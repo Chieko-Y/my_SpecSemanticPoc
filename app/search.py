@@ -11,6 +11,13 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# `python app/search.py` のように直接実行された場合、app パッケージが
+# import できるようプロジェクトルートをパスに足しておく
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.query_expansion import expand_query, load_groups  # noqa: E402
 CHUNKS_PATH = PROJECT_ROOT / "data" / "chunks.jsonl"
 EMBEDDINGS_PATH = PROJECT_ROOT / "data" / "embeddings.npy"
 
@@ -41,10 +48,24 @@ class SearchIndex:
             )
 
         self.model = SentenceTransformer(MODEL_NAME)
+        self.expansion_groups = load_groups()
 
-    def search(self, query: str, limit: int = 10, maker: str | None = None) -> list[dict]:
+    def _context(self, idx: int, offset: int, chars: int = 200) -> str:
+        """idxの前後(offset=-1 or +1)のチャンクから、同じ文書内であれば文脈を切り出す。"""
+        n = idx + offset
+        if n < 0 or n >= len(self.chunks):
+            return ""
+        neighbor = self.chunks[n]
+        if neighbor["doc_path"] != self.chunks[idx]["doc_path"]:
+            return ""
+        text = neighbor["clean_text"]
+        return text[-chars:] if offset < 0 else text[:chars]
+
+    def search(self, query: str, limit: int = 10, maker: str | None = None) -> dict:
+        expanded_query, added_terms = expand_query(query, self.expansion_groups)
+
         query_vec = self.model.encode(
-            [query], convert_to_numpy=True, normalize_embeddings=True
+            [expanded_query], convert_to_numpy=True, normalize_embeddings=True
         ).astype(np.float32)[0]
 
         scores = self.embeddings @ query_vec
@@ -75,9 +96,11 @@ class SearchIndex:
                     "heading_path": chunk["heading_path"],
                     "page_range": chunk.get("page_range", ""),
                     "excerpt": chunk["clean_text"][:400],
+                    "context_before": self._context(int(idx), -1),
+                    "context_after": self._context(int(idx), 1),
                 }
             )
-        return results
+        return {"results": results, "expanded_terms": added_terms}
 
 
 def main() -> None:
@@ -94,12 +117,19 @@ def main() -> None:
     print("インデックス読み込み中...")
     index = SearchIndex()
 
+    result = index.search(query, limit=limit)
     print(f"クエリ: {query!r}")
+    if result["expanded_terms"]:
+        print(f"  拡張で追加された語: {result['expanded_terms']}")
     print()
-    for i, r in enumerate(index.search(query, limit=limit), start=1):
+    for i, r in enumerate(result["results"], start=1):
         print(f"[{i}] score={r['score']:.3f}  {r['maker']}/{r['model']}  {r['doc_name']}")
         print(f"    heading_path: {r['heading_path']}")
+        if r["context_before"]:
+            print(f"    前の文脈: {r['context_before'][-80:]!r}")
         print(f"    excerpt: {r['excerpt'][:150]!r}")
+        if r["context_after"]:
+            print(f"    後の文脈: {r['context_after'][:80]!r}")
         print()
 
 

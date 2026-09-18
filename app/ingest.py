@@ -23,6 +23,14 @@ from collections import Counter
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# `python app/ingest.py` のように直接実行された場合、app パッケージが
+# import できるようプロジェクトルートをパスに足しておく
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.facets import FacetsNotDeclaredError, load_axes, parse_facet_values  # noqa: E402
+
 DATA_ROOT = PROJECT_ROOT / "data"
 OUT_PATH = PROJECT_ROOT / "data" / "chunks.jsonl"
 
@@ -44,15 +52,12 @@ def discover_files() -> list[Path]:
     return sorted(files)
 
 
-def parse_maker_model_category(rel_parts: tuple[str, ...]) -> tuple[str, str, str]:
-    maker, model = rel_parts[0], rel_parts[1]
+def parse_category(rel_parts: tuple[str, ...]) -> str:
     pub_idx = rel_parts.index("published")
     # published/ の直下がサブカテゴリのフォルダなら category とする(ファイル名自体なら空)
     if pub_idx + 2 < len(rel_parts):
-        category = rel_parts[pub_idx + 1]
-    else:
-        category = ""
-    return maker, model, category
+        return rel_parts[pub_idx + 1]
+    return ""
 
 
 def split_sections(text: str) -> list[tuple[list[str], list[str]]]:
@@ -118,7 +123,9 @@ def split_into_parts(text: str) -> list[str]:
     return parts
 
 
-def build_chunks_for_file(path: Path, maker: str, model: str, category: str, doc_path: str) -> list[dict]:
+def build_chunks_for_file(
+    path: Path, facet_values: dict[str, str | None], category: str, doc_path: str
+) -> list[dict]:
     text = path.read_text(encoding="utf-8", errors="replace")
     doc_name = path.name
     chunks = []
@@ -133,8 +140,7 @@ def build_chunks_for_file(path: Path, maker: str, model: str, category: str, doc
             heading_path = base_path if total == 1 else f"{base_path} > 部分{i}/{total}"
             chunks.append(
                 {
-                    "maker": maker,
-                    "model": model,
+                    **facet_values,
                     "category": category,
                     "doc_path": doc_path,
                     "doc_name": doc_name,
@@ -154,11 +160,18 @@ def main() -> None:
         print(f"[ERROR] {DATA_ROOT} 配下に published/*.md が見つかりません")
         sys.exit(1)
 
+    try:
+        axes = load_axes()
+    except FacetsNotDeclaredError as e:
+        print(f"[ERROR] {e}")
+        sys.exit(1)
+
     all_chunks: list[dict] = []
     for f in files:
         rel = f.relative_to(DATA_ROOT)
-        maker, model, category = parse_maker_model_category(rel.parts)
-        all_chunks.extend(build_chunks_for_file(f, maker, model, category, rel.as_posix()))
+        facet_values = parse_facet_values(rel.parts, axes)
+        category = parse_category(rel.parts)
+        all_chunks.extend(build_chunks_for_file(f, facet_values, category, rel.as_posix()))
 
     for idx, c in enumerate(all_chunks, start=1):
         c["chunk_id"] = f"chunk_{idx:05d}"
@@ -168,23 +181,26 @@ def main() -> None:
         for c in all_chunks:
             f.write(json.dumps(c, ensure_ascii=False) + "\n")
 
-    maker_counts = Counter(c["maker"] for c in all_chunks)
-    doc_maker_counts = Counter()
-    seen_docs = set()
-    for c in all_chunks:
-        key = c["doc_path"]
-        if key not in seen_docs:
-            seen_docs.add(key)
-            doc_maker_counts[c["maker"]] += 1
-
     print(f"対象ファイル数: {len(files)}")
     print(f"チャンク数: {len(all_chunks)}")
     print(f"出力: {OUT_PATH}")
+    print(f"宣言された絞り込み軸(data/facets.json): {axes}")
     print()
-    print("--- メーカー別 文書数 / チャンク数 ---")
-    for maker in sorted(doc_maker_counts):
-        print(f"  {maker}: {doc_maker_counts[maker]}文書 / {maker_counts[maker]}チャンク")
-    print()
+
+    seen_docs: set[str] = set()
+    for axis in axes:
+        chunk_counts = Counter(c[axis] for c in all_chunks)
+        doc_counts: Counter = Counter()
+        seen_docs.clear()
+        for c in all_chunks:
+            key = (c[axis], c["doc_path"])
+            if key not in seen_docs:
+                seen_docs.add(key)
+                doc_counts[c[axis]] += 1
+        print(f"--- 軸「{axis}」別 文書数 / チャンク数 ---")
+        for value in sorted(doc_counts):
+            print(f"  {value}: {doc_counts[value]}文書 / {chunk_counts[value]}チャンク")
+        print()
     print("--- 先頭チャンクのプレビュー ---")
     for c in all_chunks[:3]:
         print(f"[{c['chunk_id']}] {c['maker']}/{c['model']}/{c['category']} heading_path={c['heading_path']!r}")
