@@ -4,6 +4,7 @@ CLIからも FastAPI (main.py) からも同じ SearchIndex を使う。
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -22,6 +23,11 @@ from app.query_expansion import expand_query, load_groups  # noqa: E402
 from app.scoring import get_current_policy  # noqa: E402
 CHUNKS_PATH = PROJECT_ROOT / "data" / "chunks.jsonl"
 EMBEDDINGS_PATH = PROJECT_ROOT / "data" / "embeddings.npy"
+
+CHROMA_DIR = PROJECT_ROOT / "data" / "chroma"
+
+# 環境変数 SEARCH_BACKEND=chroma のときだけChromaDBで意味検索する(既定はnumpy総当たり)
+BACKEND = os.environ.get("SEARCH_BACKEND", "numpy")
 
 MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 
@@ -49,6 +55,12 @@ class SearchIndex:
                 "app/embed.py を再実行してください"
             )
 
+        self.collection = None
+        if BACKEND == "chroma":
+            import chromadb
+
+            self.collection = chromadb.PersistentClient(path=str(CHROMA_DIR)).get_collection("spec_chunks")
+
         self.model = SentenceTransformer(MODEL_NAME)
         self.expansion_groups = load_groups()
         self.keyword_index = KeywordIndex([c["clean_text"] for c in self.chunks])
@@ -65,6 +77,22 @@ class SearchIndex:
         text = neighbor["clean_text"]
         return text[-chars:] if offset < 0 else text[:chars]
 
+    def _maker_mask(self, maker: str) -> np.ndarray:
+        return np.fromiter((c["maker"] == maker for c in self.chunks), dtype=bool, count=len(self.chunks))
+
+    def _chroma_scores(self, query_vec: np.ndarray, limit: int, maker: str | None) -> np.ndarray:
+        """ChromaDBの近似探索の上位を、numpy方式と同じ「全チャンク分のスコア配列」に直す。
+        上位以外は -inf(候補外)。メーカー指定はChroma側のwhereで絞り込む。"""
+        res = self.collection.query(
+            query_embeddings=[query_vec.tolist()],
+            n_results=min(limit, len(self.chunks)),
+            where={"maker": maker} if maker else None,
+        )
+        scores = np.full(len(self.chunks), -np.inf, dtype=np.float32)
+        for id_, dist in zip(res["ids"][0], res["distances"][0]):
+            scores[int(id_)] = 1.0 - dist  # cosine距離 → 類似度
+        return scores
+
     def search(self, query: str, limit: int = 10, maker: str | None = None) -> dict:
         expanded_query, added_terms = expand_query(query, self.expansion_groups)
 
@@ -72,15 +100,19 @@ class SearchIndex:
             [expanded_query], convert_to_numpy=True, normalize_embeddings=True
         ).astype(np.float32)[0]
 
-        scores = self.embeddings @ query_vec
-        keyword_scores = self.keyword_index.scores(expanded_query)
+        mask = self._maker_mask(maker) if maker else None
+        if self.collection is not None:
+            scores = self._chroma_scores(query_vec, limit, maker)
+        else:
+            scores = self.embeddings @ query_vec
+            if mask is not None:
+                # maker指定時は対象チャンクのみを候補にしてから上位を取る
+                # (先に全体の上位N件を取ってから絞り込むと、件数の少ないメーカーが
+                #  候補から漏れて0件になってしまうため)
+                scores = np.where(mask, scores, -np.inf)
 
-        if maker:
-            # maker指定時は対象チャンクのみを候補にしてから上位を取る
-            # (先に全体の上位N件を取ってから絞り込むと、件数の少ないメーカーが
-            #  候補から漏れて0件になってしまうため)
-            mask = np.fromiter((c["maker"] == maker for c in self.chunks), dtype=bool, count=len(self.chunks))
-            scores = np.where(mask, scores, -np.inf)
+        keyword_scores = self.keyword_index.scores(expanded_query)
+        if mask is not None:
             keyword_scores = np.where(mask, keyword_scores, -np.inf)
 
         # キーワード検索への切替条件:
