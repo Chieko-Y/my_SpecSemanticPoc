@@ -46,9 +46,12 @@ SEARCH_POLICIES: dict[str, SearchPolicy] = {
     "v1": SearchPolicy(version="v1", hit_threshold=0.30, grade_a=0.70, grade_b=0.50, grade_c=0.30),
     # v2: キーワード検索フォールバック用の閾値を追加(意味検索側の値はv1と同じ)
     "v2": SearchPolicy(version="v2", hit_threshold=0.30, grade_a=0.70, grade_b=0.50, grade_c=0.30),
+    # v3: 実測に基づき意味検索の閾値を引き上げ。関連する質問の最高スコアは0.55〜0.78、
+    #     無関係な質問は最大0.37だったため、0.45を「該当あり」の境界にした
+    "v3": SearchPolicy(version="v3", hit_threshold=0.45, grade_a=0.65, grade_b=0.55, grade_c=0.45),
 }
 
-CURRENT_POLICY_VERSION = "v2"
+CURRENT_POLICY_VERSION = "v3"
 
 
 def get_current_policy() -> SearchPolicy:
