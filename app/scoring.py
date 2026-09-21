@@ -17,25 +17,38 @@ class SearchPolicy:
     grade_a: float
     grade_b: float
     grade_c: float
+    # キーワード一致(TF-IDF)検索のスコアは意味検索とは分布が違うため、別の閾値を持つ
+    keyword_hit_threshold: float = 0.15
+    keyword_grade_a: float = 0.50
+    keyword_grade_b: float = 0.30
+    keyword_grade_c: float = 0.15
 
-    def grade_for_score(self, score: float) -> str:
-        if score >= self.grade_a:
+    def grade_for_score(self, score: float, mode: str = "semantic") -> str:
+        a, b, c = (
+            (self.keyword_grade_a, self.keyword_grade_b, self.keyword_grade_c)
+            if mode == "keyword"
+            else (self.grade_a, self.grade_b, self.grade_c)
+        )
+        if score >= a:
             return "A"
-        if score >= self.grade_b:
+        if score >= b:
             return "B"
-        if score >= self.grade_c:
+        if score >= c:
             return "C"
         return "D"
 
-    def is_hit(self, score: float) -> bool:
-        return score >= self.hit_threshold
+    def is_hit(self, score: float, mode: str = "semantic") -> bool:
+        threshold = self.keyword_hit_threshold if mode == "keyword" else self.hit_threshold
+        return score >= threshold
 
 
 SEARCH_POLICIES: dict[str, SearchPolicy] = {
     "v1": SearchPolicy(version="v1", hit_threshold=0.30, grade_a=0.70, grade_b=0.50, grade_c=0.30),
+    # v2: キーワード検索フォールバック用の閾値を追加(意味検索側の値はv1と同じ)
+    "v2": SearchPolicy(version="v2", hit_threshold=0.30, grade_a=0.70, grade_b=0.50, grade_c=0.30),
 }
 
-CURRENT_POLICY_VERSION = "v1"
+CURRENT_POLICY_VERSION = "v2"
 
 
 def get_current_policy() -> SearchPolicy:

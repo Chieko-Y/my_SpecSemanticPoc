@@ -283,7 +283,7 @@
         body: JSON.stringify({ query, limit: 10, maker: selectedMaker }),
       });
       const data = await res.json();
-      renderResults(data.results, data.expanded_terms);
+      renderResults(data.results, data.expanded_terms, data.mode);
     } catch (e) {
       resultsEl.innerHTML = `<div class="empty">検索中にエラーが発生しました: ${e}</div>`;
     } finally {
@@ -291,7 +291,7 @@
     }
   }
 
-  function renderResults(results, expandedTerms) {
+  function renderResults(results, expandedTerms, mode) {
     const resultsEl = $("results");
     if (!results || results.length === 0) {
       resultsEl.innerHTML = '<div class="empty">該当する結果がありません。</div>';
@@ -302,6 +302,12 @@
       const note = document.createElement("div");
       note.className = "expansion-note";
       note.textContent = `辞書により検索語を拡張しました: ${expandedTerms.join(", ")}`;
+      resultsEl.appendChild(note);
+    }
+    if (mode === "keyword") {
+      const note = document.createElement("div");
+      note.className = "expansion-note";
+      note.textContent = "意味検索で十分な該当が無い(または型番を含む)ため、キーワード一致検索の結果を表示しています";
       resultsEl.appendChild(note);
     }
     results.forEach((r, i) => {

@@ -101,13 +101,14 @@ def search(req: SearchRequest) -> dict:
 
     results = []
     for r in search_result["results"]:
-        r["grade"] = POLICY.grade_for_score(r["score"])
-        r["hit"] = POLICY.is_hit(r["score"])
+        r["grade"] = POLICY.grade_for_score(r["score"], r["mode"])
+        r["hit"] = POLICY.is_hit(r["score"], r["mode"])
         results.append(r)
 
     return {
         "query": req.query,
         "results": results,
         "expanded_terms": search_result["expanded_terms"],
+        "mode": search_result["mode"],
         "policy_version": POLICY.version,
     }

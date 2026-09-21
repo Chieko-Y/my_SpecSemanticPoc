@@ -17,7 +17,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.keyword_search import KeywordIndex, looks_like_model_code  # noqa: E402
 from app.query_expansion import expand_query, load_groups  # noqa: E402
+from app.scoring import get_current_policy  # noqa: E402
 CHUNKS_PATH = PROJECT_ROOT / "data" / "chunks.jsonl"
 EMBEDDINGS_PATH = PROJECT_ROOT / "data" / "embeddings.npy"
 
@@ -49,6 +51,8 @@ class SearchIndex:
 
         self.model = SentenceTransformer(MODEL_NAME)
         self.expansion_groups = load_groups()
+        self.keyword_index = KeywordIndex([c["clean_text"] for c in self.chunks])
+        self.policy = get_current_policy()
 
     def _context(self, idx: int, offset: int, chars: int = 200) -> str:
         """idxの前後(offset=-1 or +1)のチャンクから、同じ文書内であれば文脈を切り出す。"""
@@ -69,6 +73,7 @@ class SearchIndex:
         ).astype(np.float32)[0]
 
         scores = self.embeddings @ query_vec
+        keyword_scores = self.keyword_index.scores(expanded_query)
 
         if maker:
             # maker指定時は対象チャンクのみを候補にしてから上位を取る
@@ -76,17 +81,30 @@ class SearchIndex:
             #  候補から漏れて0件になってしまうため)
             mask = np.fromiter((c["maker"] == maker for c in self.chunks), dtype=bool, count=len(self.chunks))
             scores = np.where(mask, scores, -np.inf)
+            keyword_scores = np.where(mask, keyword_scores, -np.inf)
+
+        # キーワード検索への切替条件:
+        #  ・意味検索の最高スコアが「該当なし」の水準、または
+        #  ・クエリに型番らしい英数字(例: CVT-2000)が含まれる
+        # ただしキーワードが1件も一致しなければ意味検索の結果をそのまま使う
+        mode = "semantic"
+        best_semantic = float(scores.max()) if scores.size else -np.inf
+        weak_semantic = not self.policy.is_hit(best_semantic)
+        if (weak_semantic or looks_like_model_code(query)) and float(keyword_scores.max()) > 0:
+            mode = "keyword"
+            scores = keyword_scores
 
         top_indices = np.argsort(-scores)[:limit]
 
         results = []
         for idx in top_indices:
-            if not np.isfinite(scores[idx]):
+            if not np.isfinite(scores[idx]) or (mode == "keyword" and scores[idx] <= 0):
                 continue
             chunk = self.chunks[int(idx)]
             results.append(
                 {
                     "score": float(scores[idx]),
+                    "mode": mode,
                     "chunk_id": chunk["chunk_id"],
                     "maker": chunk["maker"],
                     "model": chunk["model"],
@@ -100,7 +118,7 @@ class SearchIndex:
                     "context_after": self._context(int(idx), 1),
                 }
             )
-        return {"results": results, "expanded_terms": added_terms}
+        return {"results": results, "expanded_terms": added_terms, "mode": mode}
 
 
 def main() -> None:
@@ -123,7 +141,7 @@ def main() -> None:
         print(f"  拡張で追加された語: {result['expanded_terms']}")
     print()
     for i, r in enumerate(result["results"], start=1):
-        print(f"[{i}] score={r['score']:.3f}  {r['maker']}/{r['model']}  {r['doc_name']}")
+        print(f"[{i}] ({r['mode']}) score={r['score']:.3f}  {r['maker']}/{r['model']}  {r['doc_name']}")
         print(f"    heading_path: {r['heading_path']}")
         if r["context_before"]:
             print(f"    前の文脈: {r['context_before'][-80:]!r}")
