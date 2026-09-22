@@ -105,3 +105,5 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
   「maker」軸のみ(`app/main.py`の`HAS_MAKER_AXIS`)。将来車種で絞り込みたくなった場合、
   `outback-2025`/`outback-2026`のように年式込みの値のまま別ボタンにするか、車種名だけ束ねるかは
   未決定
+- 2026-09-22: 検索ツールとして一区切りとする方針を確認。ChromaDBによる本格索引・RAG回答生成は
+  `NEXT_STEPS.md`に候補として残したまま保留し、いったん開発を止める
